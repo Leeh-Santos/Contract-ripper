@@ -1,0 +1,32 @@
+The two-layer model
+The core move: a handful of agents do the reasoning, and a large, ever-growing body of data sits behind them. Adding the 300th hack or audit report changes zero .md files.
+The agents (detection, exploitation, and later triage and report) are a few version-controlled .md files. DeFiHackLabs and the audit-report knowledge base are data stores they read from — never agents themselves.
+What each piece becomes
+Piece
+What it really is
+Where it lives
+DeFiHackLabs PoCs
+Runnable ground truth — eval set + few-shot examples
+Git submodule of the real repo (don't copy it in)
+Sherlock / Cantina / Solodit reports
+Knowledge base for RAG
+Ingested once into a vector store; ingestion scripts in git, the store is a build artifact
+detection-agent
+Reasoning
+.claude/agents/detection-agent.md
+exploitation-agent
+Reasoning
+.claude/agents/exploitation-agent.md
+DeFiHackLabs has a dual role: it is the only data that is executable, so besides being retrievable examples, it is how you prove the exploitation agent works — hide the known solution, fork the block, and see if the agent rediscovers the exploit. Audit reports are text, so they are purely RAG fuel for detection.
+The agent set
+Few agents, organized by function — never by data source. Start with two, grow to maybe four:
+1.  detection-agent — runs Slither, retrieves similar historical findings from the knowledge base, reasons over the call graph, emits ranked candidates.
+2.  exploitation-agent — takes a candidate, writes and runs the Foundry PoC on a fork, iterates until an invariant breaks or it gives up.
+3.  triage-agent (later) — dedupes and ranks candidates, routes the promising ones to exploitation.
+4.  report-agent (later) — turns proven findings into a client deliverable.
+Adding the 300th hack to the knowledge base changes zero .md files.
+GitHub and distribution
+Version-control it and pull it when you need it — in two levels.
+MVP (now): one workbench repo on GitHub (private) holding .claude/agents/*.md, your skills and scripts, the PoC template, foundry.toml, the knowledge-base ingestion pipeline, and DeFiHackLabs as a submodule. Per engagement, clone it or point it at a target with --add-dir.
+Reuse across many target repos: package the agents and skills as a Claude Code plugin — a bundle of subagents, skills, commands and MCP servers. Push it to a GitHub repo with a .claude-plugin/marketplace.json, then in any repo run /plugin marketplace add <you>/<repo> once and /plugin install <name>@<marketplace>. It works with any git host, and you can scope the install to user, project, or local.
+One rule keeps the layers clean: the data does not go in the plugin. The plugin ships the brains (agents + skills); DeFiHackLabs stays a submodule and the knowledge base stays a vector store or MCP server the agents query. That way you update agents without re-shipping gigabytes, and grow the knowledge base without touching the agents.
