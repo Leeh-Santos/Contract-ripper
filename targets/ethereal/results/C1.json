@@ -1,0 +1,12 @@
+{
+  "candidate_id": "C1",
+  "status": "confirmed",
+  "poc_path": "targets/ethereal/test/C1.t.sol",
+  "fork_block": null,
+  "attacker_profit": "n/a (griefing/insolvency; loss is borne by the victim ETH-gem holder, not attacker profit)",
+  "invariant_broken": "address(ethereal).balance >= sum of outstanding ETH-gem denominations (contract 0.9 ETH < 1.0 ETH owed; victim redeem reverts)",
+  "iterations": 1,
+  "trace_evidence": "forge test PASS test_exploit_crossAssetInsolvency. Logs: ETH backing outstanding 1.0e18; fees armed (wstETH units) 1.0e17; contract ETH after withdrawFees 0.9e18; victim net payout owed 0.95e18. assertLt(contractEthAfter, ethBackingOutstanding) passes and victim redeem() reverts for insufficient ETH.",
+  "notes": "No fork (needs_fork=false). Deployed Ethereal + a minimal 1:1 mock wstETH, pointed via owner setWstEth(mock). Owner-only calls (createCollection/createGem/setWstEth) are legitimate setUp config; the exploit is driven by unprivileged attacker (mint+redeem wstETH gem to arm `fees` with wstETH-unit numbers) and victim (honest ETH-gem holder who loses backing). Owner's routine withdrawFees() pays the wstETH-denominated fee out as NATIVE ETH drawn from the ETH-gem backing pool. Two attacker mint/redeem cycles used so the mixed-unit fee (0.1 ETH) exceeds the victim gem's own 0.05 ETH fee cushion, making the victim redeem concretely revert; a single cycle already breaks the balance>=backing invariant. Patched code (separate per-asset fee accounting) would leave 1.0e18 ETH in the contract and the assertLt would fail -> test is a true proof.",
+  "reason_if_failed": null
+}

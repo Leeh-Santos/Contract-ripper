@@ -1,0 +1,86 @@
+{
+  "target": "ethereal (targets/ethereal/src/ethereal.sol)",
+  "invariants": [
+    "Native ETH held by the contract must always be >= sum of all ETH-backed gem denominations still circulating (every ETH gem fully redeemable).",
+    "wstETH held by the contract must always be >= sum of all wstETH-backed gem balances still circulating.",
+    "The two backing pools (native ETH vs wstETH) are distinct assets and value must never cross between them.",
+    "`fees` must represent a single, withdrawable unit of account and must only ever be paid out of funds that are NOT backing an outstanding gem.",
+    "No actor (privileged or not) can cause a gem to redeem for more or from a different asset than it was minted with."
+  ],
+  "candidates": [
+    {
+      "id": "C1",
+      "title": "Shared `fees` accumulator mixes ETH-wei and wstETH units; withdrawFees pays native ETH for wstETH-denominated fees, draining ETH-gem backing (insolvency)",
+      "class": "accounting-unit-mismatch / cross-asset-insolvency",
+      "severity": "high",
+      "confidence": 0.8,
+      "location": "ethereal.sol: _redeemEth() L177-179, _redeemWstEth() L188-190 (`fees += redeemFee`), withdrawFees() L259-263 (`payout.call{value: fees}`)",
+      "invariant_broken": "Native ETH held >= sum of circulating ETH-gem backings; `fees` is a single unit of account paid only from non-backing funds.",
+      "mechanism": "There is ONE `uint256 fees`. In _redeemEth the fee added is in ETH wei; in _redeemWstEth the fee added is in wstETH token units (a different asset with a different per-unit value). Both are summed into the same `fees`. withdrawFees() then sends `payout.call{value: fees}` i.e. it pays out native ETH equal to the full mixed total. In a deployment that has BOTH an ETH collection and a wstETH collection (the protocol's core supported configuration), the wstETH-denominated portion of `fees` is paid out in native ETH that is actually backing outstanding ETH gems. After the owner performs the ordinary, expected withdrawFees() call, the contract's native ETH balance is less than the sum of still-circulating ETH-gem denominations, so some ETH gem holders can no longer redeem — the protocol is insolvent. An unprivileged user can deliberately set this up as a grief: mint and immediately redeem wstETH gems to pump `fees` with large wstETH-unit numbers, knowing the owner's next routine withdrawFees() will drain native ETH that belongs to OTHER users' ETH gems. Separately, the wstETH collected as 'fee' stays locked as wstETH forever (no wstETH fee-withdrawal path), so fees are also double-mis-accounted.",
+      "attack_steps": [
+        "Owner setup (normal protocol config): createCollection(ETH, ethereum=true) -> cEth; createCollection(wstETH, ethereum=false) -> cW; createGem(cEth, denom=1e18, redeemFee>0, active) -> gEth; createGem(cW, denom=1e18, redeemFee>0, active) -> gW.",
+        "Victim mints an ETH gem: victim calls mint(gEth,victim){value:1e18}. Contract now holds 1e18 native ETH backing that gem.",
+        "Attacker (fresh wallet) mints a wstETH gem: attacker calls mint(gW,attacker){value:1e18}; the 1e18 ETH is forwarded to wstETH and ~1e18 wstETH units are recorded as the gem balance. Native ETH held is unchanged (still = victim's 1e18).",
+        "Attacker redeems the wstETH gem: redeem(tokenW). _redeemWstEth computes redeemFee in wstETH units (e.g. redeemFee=100 => 1% => ~1e16) and does `fees += ~1e16` (wstETH units). Attacker gets wstETH back; the fee stays as locked wstETH.",
+        "Owner performs the routine fee withdrawal: withdrawFees() sends `payout.call{value: fees}` = ~1e16 native ETH. But that ETH came out of the victim's 1e18 ETH-gem backing, not from any ETH-denominated fee.",
+        "Invariant broken: contract native ETH balance (~0.99e18) < victim's ETH gem denomination (1e18). Victim calls redeem(tokenEth) -> _redeemEth's `msg.sender.call{value: amount}` fails for lack of ETH (or the LAST ETH redeemer in aggregate fails). Proven insolvency / loss of user funds.",
+        "PoC harness note: deploy a minimal mock wstETH (payable receive() that mints 1:1 ERC20 and implements balanceOf/transfer) and point to it via owner setWstEth(mock); the bug is pure accounting and does not depend on real wstETH price, so no mainnet state is required."
+      ],
+      "preconditions": "A deployment with at least one ETH collection (ethereum=true) and at least one wstETH collection (ethereum=false) both in use, and at least one wstETH redemption with a non-zero redeemFee before the owner calls withdrawFees(). Owner's withdrawFees() is a normal expected action, not an attack.",
+      "needs_fork": false,
+      "source_refs": ["taxonomy://accounting-drift", "taxonomy://unit-mismatch"]
+    },
+    {
+      "id": "C2",
+      "title": "wstETH redemption fees are permanently locked and withdrawFees reverts in wstETH-only deployments",
+      "class": "accounting-unit-mismatch / stuck-funds",
+      "severity": "medium",
+      "confidence": 0.85,
+      "location": "ethereal.sol: _redeemWstEth() L190 (`fees += redeemFee`), withdrawFees() L259-263",
+      "invariant_broken": "Collected protocol fees must be withdrawable in the asset they were collected in; `fees` must be payable.",
+      "mechanism": "Same root cause as C1 viewed from the wstETH side. wstETH redeem fees increment `fees`, but the only fee-withdrawal path sends native ETH. There is no function to pay out accumulated wstETH fees as wstETH. In a wstETH-only deployment the contract holds ~no native ETH (all mint ETH is forwarded to wstETH), so withdrawFees() reverts on `require(success)` and the wstETH fee revenue is stranded in the contract forever. In a mixed deployment the wstETH fees are instead paid out as ETH (C1).",
+      "attack_steps": [
+        "Owner: createCollection(wstETH, ethereum=false); createGem(..., redeemFee>0, active).",
+        "User mints and redeems a wstETH gem -> `fees` increases by a wstETH-unit amount; wstETH fee stays in contract; contract native ETH balance ~= 0.",
+        "Owner calls withdrawFees() -> `payout.call{value: fees}` fails (no native ETH) -> require(success) reverts -> fees are permanently unwithdrawable."
+      ],
+      "preconditions": "wstETH collection in use with non-zero redeemFee.",
+      "needs_fork": false,
+      "source_refs": ["taxonomy://stuck-funds"]
+    },
+    {
+      "id": "C3",
+      "title": "Owner trust / mutable critical config enables fund drain and cross-pool mis-redemption",
+      "class": "centralization / privileged-config",
+      "severity": "medium",
+      "confidence": 0.7,
+      "location": "ethereal.sol: setWstEth() L249, approveWstEth() L265-268, updateCollection() L105-118, updateGem() L120-128",
+      "invariant_broken": "A gem redeems for the same asset and amount it was minted with; backing assets cannot be externally drained.",
+      "mechanism": "approveWstEth(spender) grants an arbitrary spender an unbounded (type(uint256).max) wstETH allowance, letting that address transferFrom all backing wstETH out of the contract. setWstEth() lets the owner repoint the backing token to an arbitrary contract. updateCollection() can flip a collection's `ethereum` flag AFTER gems are minted: a wstETH gem (balance stored in wstETH units) would then redeem via _redeemEth and pay native ETH equal to that wstETH-unit number — paying from the wrong asset pool and draining native ETH that backs unrelated ETH gems. updateGem() can lower/raise redeemFee or change a gem's collection on live positions. These are owner-gated (trusted-owner), but they are latent rug/footgun vectors worth flagging because they break the per-gem asset/amount invariant without any user consent.",
+      "attack_steps": [
+        "Drain path: owner (or compromised owner key) calls approveWstEth(attacker); attacker calls wstETH.transferFrom(ethereal, attacker, all) -> all backing wstETH removed, wstETH gems unredeemable.",
+        "Wrong-pool path: wstETH gems exist with balances in wstETH units; owner calls updateCollection(cW, ..., ethereum=true, ...); redeem(wstETHgem) now routes to _redeemEth and sends native ETH equal to the wstETH-unit balance, draining the native-ETH pool that backs ETH gems."
+      ],
+      "preconditions": "Owner action (trusted-owner assumption) or owner key compromise.",
+      "needs_fork": false,
+      "source_refs": ["taxonomy://access-control", "taxonomy://centralization"]
+    },
+    {
+      "id": "C4",
+      "title": "Approved operator (non-owner) cannot redeem — redeem passes _checkAuthorized but reverts in safeTransferFrom",
+      "class": "logic-error / DoS",
+      "severity": "low",
+      "confidence": 0.75,
+      "location": "ethereal.sol: redeem() L198-206, _redeemEth() L174 / _redeemWstEth() L187 (`safeTransferFrom(msg.sender, address(this), _tokenId)`)",
+      "invariant_broken": "Anyone authorized per _checkAuthorized should be able to redeem.",
+      "mechanism": "redeem() authorizes via _checkAuthorized(owner, msg.sender, _tokenId), which passes for approved operators / single-token approvals even when msg.sender is not the owner. But _redeemEth/_redeemWstEth then call safeTransferFrom(msg.sender, address(this), _tokenId) with from=msg.sender. When msg.sender is an approved operator (not the owner), ERC721._update sees _ownerOf(tokenId) != from and reverts with ERC721IncorrectOwner. Functional bug (approved operators can't redeem); no fund loss, so low severity.",
+      "attack_steps": [
+        "owner approves operator via approve(operator, tokenId) or setApprovalForAll(operator,true).",
+        "operator calls redeem(tokenId) -> _checkAuthorized passes -> safeTransferFrom(operator, this, tokenId) reverts ERC721IncorrectOwner."
+      ],
+      "preconditions": "Redeemer is an approved non-owner.",
+      "needs_fork": false,
+      "source_refs": ["taxonomy://logic-error"]
+    }
+  ]
+}
