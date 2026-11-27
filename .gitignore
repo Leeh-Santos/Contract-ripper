@@ -1,0 +1,19 @@
+# Foundry
+out/
+cache/
+broadcast/
+
+# Knowledge-base index is a build artifact (rebuild with scripts/ingest.py)
+knowledge-base/.index.json
+
+# Per-engagement target work (keep the dir, ignore heavy build output)
+targets/**/out/
+targets/**/cache/
+
+# Env / secrets — never commit RPC URLs or keys
+.env
+*.local
+
+# Python
+__pycache__/
+*.pyc

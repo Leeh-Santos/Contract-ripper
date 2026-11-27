@@ -19,17 +19,11 @@ Reasoning
 .claude/agents/exploitation-agent.md
 DeFiHackLabs has a dual role: it is the only data that is executable, so besides being retrievable examples, it is how you prove the exploitation agent works — hide the known solution, fork the block, and see if the agent rediscovers the exploit. Audit reports are text, so they are purely RAG fuel for detection.
 The agent set
-Few agents, organized by function — never by data source. Start with two, grow to maybe four:
+Few agents, organized by function — never by data source. Start with two>
 1.  detection-agent — runs Slither, retrieves similar historical findings from the knowledge base, reasons over the call graph, emits ranked candidates.
 2.  exploitation-agent — takes a candidate, writes and runs the Foundry PoC on a fork, iterates until an invariant breaks or it gives up.
-3.  triage-agent (later) — dedupes and ranks candidates, routes the promising ones to exploitation.
-4.  report-agent (later) — turns proven findings into a client deliverable.
-Adding the 300th hack to the knowledge base changes zero .md files.
-GitHub and distribution
-Version-control it and pull it when you need it — in two levels.
-MVP (now): one workbench repo on GitHub (private) holding .claude/agents/*.md, your skills and scripts, the PoC template, foundry.toml, the knowledge-base ingestion pipeline, and DeFiHackLabs as a submodule. Per engagement, clone it or point it at a target with --add-dir.
-Reuse across many target repos: package the agents and skills as a Claude Code plugin — a bundle of subagents, skills, commands and MCP servers. Push it to a GitHub repo with a .claude-plugin/marketplace.json, then in any repo run /plugin marketplace add <you>/<repo> once and /plugin install <name>@<marketplace>. It works with any git host, and you can scope the install to user, project, or local.
-One rule keeps the layers clean: the data does not go in the plugin. The plugin ships the brains (agents + skills); DeFiHackLabs stays a submodule and the knowledge base stays a vector store or MCP server the agents query. That way you update agents without re-shipping gigabytes, and grow the knowledge base without touching the agents.
+
+
 
 
 
